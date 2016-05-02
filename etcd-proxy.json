@@ -1,0 +1,200 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "An etcd cluster based off an auto scaling group",
+  "Mappings" : {
+      "RegionMap" : {
+          "eu-central-1" : {
+              "AMI" : "ami-840a0899"
+          },
+          "ap-northeast-1" : {
+              "AMI" : "ami-6c5ac56c"
+          },
+          "us-gov-west-1" : {
+          	  "AMI" : "ami-796a085a"
+          },
+          "sa-east-1" : {
+              "AMI" : "ami-3396012e"
+          },
+          "ap-southeast-2" : {
+              "AMI" : "ami-f5ace5cf"
+          },
+          "ap-southeast-1" : {
+              "AMI" : "ami-46819614"
+          },
+          "us-east-1" : {
+              "AMI" : "ami-05783d60"
+          },
+          "us-west-2" : {
+              "AMI" : "ami-ed8b90dd"
+          },
+          "us-west-1" : {
+              "AMI" : "ami-2b29ee6f"
+          },
+          "eu-west-1" : {
+              "AMI" : "ami-eb97bc9c"
+          }
+      }
+  },
+  "Parameters": {
+    "InstanceType" : {
+      "Description" : "EC2 HVM instance type (m3.medium, etc).",
+      "Type" : "String",
+      "Default" : "t2.micro",
+      "ConstraintDescription" : "Must be a valid EC2 HVM instance type."
+    },
+    "ProxyClusterSize": {
+      "Default": "1",
+      "MinValue": "0",
+      "MaxValue": "9",
+      "Description": "Number of nodes in cluster (0-9).",
+      "Type": "Number"
+    },
+    "EtcdPeersAutoScalingGroup": {
+      "Description": "Name of the auto-scaling group etcd peers are in",
+      "Type": "String"
+    },
+    "AdvertisedIPAddress": {
+      "Description": "Use 'private' if your etcd cluster is within one region or 'public' if it spans regions or cloud providers.",
+      "Default": "private",
+      "AllowedValues": ["private", "public"],
+      "Type": "String"
+    },
+    "AllowSSHFrom": {
+      "Description": "The net block (CIDR) that SSH is available to.",
+      "Default": "0.0.0.0/0",
+      "Type": "String"
+    },
+    "EtcdClusterSecurityGroup": {
+      "Description": "The name of an security group which etcd peers and proxies communiate",
+      "Type": "String"
+    },
+    "KeyPair" : {
+      "Description" : "The name of an EC2 Key Pair to allow SSH access to the instance.",
+      "Type" : "String"
+    }
+  },
+  "Resources": {
+    "CoreOSSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "CoreOS SecurityGroup",
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": "22", "ToPort": "22", "CidrIp": {"Ref": "AllowSSHFrom"}}
+        ]
+      }
+    },
+    "cliROrole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ec2.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "CLIROAccess",
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:Describe*"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "autoscaling:Describe*"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ],
+        "Path": "/"
+      }
+    },
+    "CLIROAccessProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          {
+            "Ref": "cliROrole"
+          }
+        ]
+      }
+    },
+    "CoreOSProxyAutoScale": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "AvailabilityZones": {"Fn::GetAZs": ""},
+        "LaunchConfigurationName": {"Ref": "CoreOSProxyLaunchConfig"},
+        "MinSize": "0",
+        "MaxSize": "9",
+        "DesiredCapacity": {"Ref": "ProxyClusterSize"},
+        "Tags": [
+            {"Key": "Name", "Value": { "Ref" : "AWS::StackName" }, "PropagateAtLaunch": true}
+        ]
+      }
+    },
+    "CoreOSProxyLaunchConfig": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "ImageId" : { "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "AMI" ]},
+        "InstanceType": {"Ref": "InstanceType"},
+        "KeyName": {"Ref": "KeyPair"},
+        "SecurityGroups": [{"Ref": "CoreOSSecurityGroup"}, {"Ref": "EtcdClusterSecurityGroup"}],
+        "IamInstanceProfile": {"Ref": "CLIROAccessProfile"},
+        "UserData" : { "Fn::Base64":
+          { "Fn::Join": [ "", [
+            "#cloud-config\n\n",
+            "coreos:\n",
+            "  etcd2:\n",
+			"    advertise-client-urls: http://$", { "Ref": "AdvertisedIPAddress" }, "_ipv4:2379\n",
+			"    initial-advertise-peer-urls: http://$", { "Ref": "AdvertisedIPAddress" }, "_ipv4:2380\n",
+			"    listen-client-urls: http://0.0.0.0:2379\n",
+			"    listen-peer-urls: http://$", { "Ref": "AdvertisedIPAddress" }, "_ipv4:2380\n",
+            "  units:\n",
+            "    - name: etcd2.service\n",
+            "      command: stop\n",
+            "    - name: etcd-peers.service\n",
+			"      command: start\n",
+      		"      content: |\n",
+      		"        [Unit]\n",
+      		"        Description=Write a file with the etcd peers that we should bootstrap to\n",
+      		"        [Service]\n",
+      		"        Restart=on-failure\n",
+      		"        RestartSec=10\n",
+      		"        ExecStartPre=/usr/bin/docker pull monsantoco/etcd-aws-cluster:latest\n",
+      		"        ExecStartPre=/usr/bin/docker run -e PROXY_ASG=", { "Ref": "EtcdPeersAutoScalingGroup" } ," --rm=true -v /etc/sysconfig/:/etc/sysconfig/ monsantoco/etcd-aws-cluster:latest\n",
+      		"        ExecStart=/usr/bin/systemctl start etcd2\n",
+            "    - name: fleet.service\n",
+            "      command: start\n",
+            "write_files:\n",
+            "  - path: /etc/systemd/system/etcd2.service.d/30-etcd_peers.conf\n",
+			"    permissions: 0644\n",
+			"    content: |\n",
+			"      [Service]\n",
+			"      # Load the other hosts in the etcd leader autoscaling group from file\n",
+			"      EnvironmentFile=/etc/sysconfig/etcd-peers\n"
+            ] ]
+          }
+        }
+      }
+    }
+  }
+}

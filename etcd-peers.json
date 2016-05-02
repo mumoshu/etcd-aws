@@ -1,0 +1,216 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "An etcd cluster based off an auto scaling group",
+  "Mappings" : {
+      "RegionMap" : {
+          "eu-central-1" : {
+              "AMI" : "ami-840a0899"
+          },
+          "ap-northeast-1" : {
+              "AMI" : "ami-e304148d"
+          },
+          "us-gov-west-1" : {
+          	  "AMI" : "ami-796a085a"
+          },
+          "sa-east-1" : {
+              "AMI" : "ami-3396012e"
+          },
+          "ap-southeast-2" : {
+              "AMI" : "ami-f5ace5cf"
+          },
+          "ap-southeast-1" : {
+              "AMI" : "ami-46819614"
+          },
+          "us-east-1" : {
+              "AMI" : "ami-05783d60"
+          },
+          "us-west-2" : {
+              "AMI" : "ami-ed8b90dd"
+          },
+          "us-west-1" : {
+              "AMI" : "ami-2b29ee6f"
+          },
+          "eu-west-1" : {
+              "AMI" : "ami-eb97bc9c"
+          }
+      }
+  },
+  "Parameters": {
+    "InstanceType" : {
+      "Description" : "EC2 HVM instance type (m3.medium, etc).",
+      "Type" : "String",
+      "Default" : "t2.micro",
+      "ConstraintDescription" : "Must be a valid EC2 HVM instance type."
+    },
+    "ClusterSize": {
+      "Default": "3",
+      "MinValue": "3",
+      "MaxValue": "9",
+      "Description": "Number of nodes in cluster (3-9).",
+      "Type": "Number"
+    },
+    "AdvertisedIPAddress": {
+      "Description": "Use 'private' if your etcd cluster is within one region or 'public' if it spans regions or cloud providers.",
+      "Default": "private",
+      "AllowedValues": ["private", "public"],
+      "Type": "String"
+    },
+    "AllowSSHFrom": {
+      "Description": "The net block (CIDR) that SSH is available to.",
+      "Default": "0.0.0.0/0",
+      "Type": "String"
+    },
+    "KeyPair" : {
+      "Description" : "The name of an EC2 Key Pair to allow SSH access to the instance.",
+      "Type" : "String"
+    }
+  },
+  "Resources": {
+    "CoreOSSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "CoreOS SecurityGroup",
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": "22", "ToPort": "22", "CidrIp": {"Ref": "AllowSSHFrom"}}
+        ]
+      }
+    },
+    "Ingress2379": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "GroupName": {"Ref": "CoreOSSecurityGroup"}, "IpProtocol": "tcp", "FromPort": "2379", "ToPort": "2379", "SourceSecurityGroupId": {
+          "Fn::GetAtt" : [ "CoreOSSecurityGroup", "GroupId" ]
+        }
+      }
+    },
+    "Ingress2380": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "GroupName": {"Ref": "CoreOSSecurityGroup"}, "IpProtocol": "tcp", "FromPort": "2380", "ToPort": "2380", "SourceSecurityGroupId": {
+          "Fn::GetAtt" : [ "CoreOSSecurityGroup", "GroupId" ]
+        }
+      }
+    },
+    "cliROrole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ec2.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "CLIROAccess",
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:Describe*"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "autoscaling:Describe*"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ],
+        "Path": "/"
+      }
+    },
+    "CLIROAccessProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          {
+            "Ref": "cliROrole"
+          }
+        ]
+      }
+    },
+    "CoreOSServerAutoScale": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "AvailabilityZones": {"Fn::GetAZs": ""},
+        "LaunchConfigurationName": {"Ref": "CoreOSServerLaunchConfig"},
+        "MinSize": "3",
+        "MaxSize": "9",
+        "DesiredCapacity": {"Ref": "ClusterSize"},
+        "Tags": [
+            {"Key": "Name", "Value": { "Ref" : "AWS::StackName" }, "PropagateAtLaunch": true}
+        ]
+      }
+    },
+    "CoreOSServerLaunchConfig": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "ImageId" : { "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "AMI" ]},
+        "InstanceType": {"Ref": "InstanceType"},
+        "KeyName": {"Ref": "KeyPair"},
+        "SecurityGroups": [{"Ref": "CoreOSSecurityGroup"}],
+        "IamInstanceProfile": {"Ref": "CLIROAccessProfile"},
+        "UserData" : { "Fn::Base64":
+          { "Fn::Join": [ "", [
+            "#cloud-config\n\n",
+            "coreos:\n",
+            "  etcd2:\n",
+			"    advertise-client-urls: http://$", { "Ref": "AdvertisedIPAddress" }, "_ipv4:2379\n",
+			"    initial-advertise-peer-urls: http://$", { "Ref": "AdvertisedIPAddress" }, "_ipv4:2380\n",
+			"    listen-client-urls: http://0.0.0.0:2379\n",
+			"    listen-peer-urls: http://$", { "Ref": "AdvertisedIPAddress" }, "_ipv4:2380\n",
+            "  units:\n",
+            "    - name: etcd2.service\n",
+            "      command: stop\n",
+            "    - name: etcd-peers.service\n",
+			"      command: start\n",
+      		"      content: |\n",
+      		"        [Unit]\n",
+      		"        Description=Write a file with the etcd peers that we should bootstrap to\n",
+      		"        [Service]\n",
+      		"        Restart=on-failure\n",
+      		"        RestartSec=10\n",
+      		"        ExecStartPre=/usr/bin/docker pull monsantoco/etcd-aws-cluster:latest\n",
+      		"        ExecStartPre=/usr/bin/docker run --rm=true -v /etc/sysconfig/:/etc/sysconfig/ monsantoco/etcd-aws-cluster:latest\n",
+      		"        ExecStart=/usr/bin/systemctl start etcd2\n",
+            "    - name: fleet.service\n",
+            "      command: start\n",
+            "write_files:\n",
+            "  - path: /etc/systemd/system/etcd2.service.d/30-etcd_peers.conf\n",
+			"    permissions: 0644\n",
+			"    content: |\n",
+			"      [Service]\n",
+			"      # Load the other hosts in the etcd leader autoscaling group from file\n",
+			"      EnvironmentFile=/etc/sysconfig/etcd-peers\n"
+            ] ]
+          }
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "EtcdPeersAutoScalingGroup": {
+      "Value": {"Ref": "CoreOSServerAutoScale"}
+    },
+    "EtcdClusterSecurityGroup": {
+      "Value": {"Ref": "CoreOSSecurityGroup"}
+    }
+  }
+}

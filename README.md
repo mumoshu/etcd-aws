@@ -1,5 +1,10 @@
-etcd-aws-cluster
+etcd-aws
 ==============
+
+A set of AWS CloudFormation templates and utility scripts to automate creating highly-available etcd cluster.
+Currently targeting to be used in combination with [`kube-aws` from CoreOS](https://github.com/coreos/coreos-kubernetes/tree/master/multi-node/aws).
+
+This project is a fork from [MonsantoCo/etcd-aws-cluster](https://github.com/MonsantoCo/etcd-aws-cluster). Much thanks to people from Monsanto for doing the hard things and [sharing their experiences](http://engineering.monsanto.com/2015/06/12/etcd-clustering/).
 
 This container serves to assist in the creation of an etcd (2.x) cluster from an AWS auto scaling group. It writes a file to /etc/sysconfig/etcd-peers that contains parameters for etcd:
 
