@@ -1,10 +1,13 @@
 etcd-aws
-==============
+========
 
 A set of AWS CloudFormation templates and utility scripts to automate creating highly-available etcd cluster.
 Currently targeting to be used in combination with [`kube-aws` from CoreOS](https://github.com/coreos/coreos-kubernetes/tree/master/multi-node/aws).
 
-This project is a fork from [MonsantoCo/etcd-aws-cluster](https://github.com/MonsantoCo/etcd-aws-cluster). Much thanks to people from Monsanto for doing the hard things and [sharing their experiences](http://engineering.monsanto.com/2015/06/12/etcd-clustering/).
+This project is a fork from [MonsantoCo/etcd-aws-cluster](https://github.com/MonsantoCo/etcd-aws-cluster) and also CloudFormation templates included in this project is originally from [a gist from folks at MonsantoCo](https://gist.github.com/tj-corrigan/3baf86051471062b2fb7). Much thanks to people from Monsanto for doing the hard things and [sharing their experiences](http://engineering.monsanto.com/2015/06/12/etcd-clustering/).
+
+Docker image
+------------
 
 This container serves to assist in the creation of an etcd (2.x) cluster from an AWS auto scaling group. It writes a file to /etc/sysconfig/etcd-peers that contains parameters for etcd:
 
@@ -55,4 +58,15 @@ Usage
 Demo
 ----
 
-We have created a CloudFomation script that shows sample usage of this container for creating a simple etcd cluster: https://gist.github.com/tj-corrigan/3baf86051471062b2fb7
+We have created a CloudFomation script that shows sample usage of this container for creating a simple etcd cluster: 
+
+Developing
+----------
+
+* Fork this repo on GitHub
+* `git clone $YOUR_GITHUB_REPO_URL $GOPATH/src/github.com/YOUR_GITHUB_USER/etcd-aws`
+* `cd $GOPATH/src/github.com/YOUR_GITHUB_USER/etcd-aws`
+* `glide install` to install dependencies on your machine
+* Code or run `cobra add $YOUR_SHINY_NEW_SUB_COMMAND` to generate sources for a new sub-command
+* Test with `go run main.go` or `go run main.go $SUBCOMMAND` or `go test $(glide novendor)`
+* Sumbit pull-requests!
